@@ -18,7 +18,6 @@ import sys
 import re
 import argparse
 import socket
-from satellite_api import get_json, post_json, put_json, print_json
 
 try:
     import requests
@@ -30,30 +29,72 @@ requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 parser = argparse.ArgumentParser(description='sat6-add-to-host-collection.py')
 parser.add_argument('-v', '--verbose' , action="store_true", dest='verbose',  help='Be verbose')
+parser.add_argument('-a', '--take-action' , action="store_false", dest='noop',  help='Take action and reorganize VDC subscriptions. If not specified, script will only display the changes it would make.')
 args =parser.parse_args()
 
-api = "api/"
-katello_api = "katello/api/"
+org_name = "Default Organization"
+hostname = "localhost"
+username = "admin"
+password = "password"
+
+api = "https://" + hostname + "/api/"
+katello_api = "https://" + hostname + "/katello/api/"
 post_headers = {'content-type': 'application/json'}
 ssl_verify = False
 
-org_name = "<someorg>"
-hostname = socket.gethostname()
-username = "<someusername>"
-password = "<somepassword>"
 
 # Take from these
 unnecessary_consumers = []
 # And give to these
 unentitled = []
 
+def get_json(location):
+    """
+    Performs a GET using the passed url location
+    """
+    try:
+        r = requests.get(location, auth=(username, password), verify=ssl_verify)
+    except requests.ConnectionError, e:
+        print "Couldn't connect to the API, check connection or url"
+        print e
+        sys.exit(1)
+    return r.json()
+
+
+def post_json(location, json_data):
+    """
+    Performs a POST and passes the data to the url location
+    """
+    try:
+        result = requests.post(location,
+                            data=json_data,
+                            auth=(username, password),
+                            verify=ssl_verify,
+                            headers=post_headers)
+
+    except requests.ConnectionError, e:
+        print "Couldn't connect to the API, check connection or url"
+        print e
+        sys.exit(1)
+    return result.json()
+
+def put_json(location, json_data):
+    """
+    Performs a PUT and passes the data to the url location
+    """
+
+    result = requests.put(location,
+                            data=json_data,
+                            auth=(username, password),
+                            verify=ssl_verify,
+                            headers=post_headers)
 def main():
     """
     Main method that gets organizations, hosts and host collections
     and them adds the host to the host collections specified 
     """
 
-    orgs = get_json(username, password, katello_api + "organizations/")
+    orgs = get_json(katello_api + "organizations/")
     for org in orgs["results"]:
         if org['name'] == org_name:
            org_id = org['id']
@@ -65,18 +106,18 @@ def main():
         print "Organization " + org_name + " does not exist. Exiting..." 
         exit(1)
 
-    hypervisors = get_json(username, password, api + "organizations/" + str(org_id) + "/hosts?search=name+~+virt-who&per_page=1000")
+    hypervisors = get_json(api + "organizations/" + str(org_id) + "/hosts?search=name+~+virt-who&per_page=1000")
     count = 0
     for hypervisor in hypervisors["results"]:
         guests = []
         hyper_hash = {}
-        details = get_json(username, password, api + "hosts/" + str(hypervisor["id"]))
+        details = get_json(api + "hosts/" + str(hypervisor["id"]))
         if details["subscription_facet_attributes"]["virtual_guests"]:
             has_guests = True
         else:
             has_guests = False
         
-        hypervisor_subscription_json = get_json(username, password, api + "hosts/" + str(hypervisor["id"]) + "/subscriptions")
+        hypervisor_subscription_json = get_json(api + "hosts/" + str(hypervisor["id"]) + "/subscriptions")
         if hypervisor_subscription_json["total"] != 0:
             hypervisor_subscription_name = hypervisor_subscription_json["results"][0]["name"]
             if "Virtual Datacenter" in hypervisor_subscription_name:
@@ -142,13 +183,16 @@ def main():
         })
         print "Taking subscription from " + unnecessary_consumers[i]['host']['name']
         print " and gives it to " + unentitled[i]['host']['name']
+        if noop == False:
         # remove sub from host
-        results = put_json(username, password, api + "/hosts/" + str(unnecessary_consumers[i]['host']['id']) + "/remove_subscriptions", sub_hash)
-        print str(results)
-        # add the newly removed sub to the needing host
-        results = put_json(username, password, api + "/hosts/" + str(unentitled[i]['host']['id']) + "/add_subscriptions", sub_hash)
-        print results
-        
+            results = put_json(api + "/hosts/" + str(unnecessary_consumers[i]['host']['id']) + "/remove_subscriptions", sub_hash)
+            print str(results)
+            # add the newly removed sub to the needing host
+            results = put_json(api + "/hosts/" + str(unentitled[i]['host']['id']) + "/add_subscriptions", sub_hash)
+            print results
+        else:
+            print "noop, won't perform any changes.."
+
         i = i+1
     
                 
